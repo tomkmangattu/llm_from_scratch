@@ -1,13 +1,12 @@
-
 class Value:
-    """Warps a sclar and remembers how it was computed, so gradients can flow backward through it."""
+    """Wraps a scalar and remembers how it was computed, so gradients can flow backward through it."""
 
     def __init__(self, data, _children=(), _op="") -> None:
         self.data = data
         self.grad = 0.0
         self._prev = set(_children)
-        self._op = _op # just a label, useful for debugging/printing
-        self._backward = lambda: None # default: leaf node, nothing to propagate
+        self._op = _op  # just a label, useful for debugging/printing
+        self._backward = lambda: None  # default: leaf node, nothing to propagate
 
     def __repr__(self) -> str:
         return f"Value(data={self.data}, grad={self.grad})"
@@ -23,7 +22,7 @@ class Value:
         else:
             b_node = Value(other)
         out = Value(self.data + b_node.data, (self, b_node), "+")
-        out._backward = lambda :  propagate_grad(self, b_node, out)
+        out._backward = lambda: propagate_grad(self, b_node, out)
         return out
 
     def __mul__(self, other):
@@ -37,19 +36,20 @@ class Value:
         else:
             otherValue = Value(other)
         out = Value(self.data * otherValue.data, (self, otherValue), "*")
-        out._backward = lambda :  propagate_grad(self, otherValue, out)
+        out._backward = lambda: propagate_grad(self, otherValue, out)
         return out
 
     def backward(self):
-        pass
-        
+        topo: list[Value] = []
+        visited = set()
 
-def main():
-    a = Value(3)
-    b = Value(4)
-    c = a * b
-    print(c)
+        def build_topo(v: Value):
+            if v not in visited:
+                visited.add(v)
+                [build_topo(node) for node in v._prev]
+                topo.append(v)
 
+        build_topo(self)
 
-if __name__ == "__main__":
-    main()
+        self.grad = 1.0
+        [node._backward() for node in reversed(topo)]
