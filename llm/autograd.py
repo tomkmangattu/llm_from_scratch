@@ -1,3 +1,8 @@
+import math
+import random
+from typing import Any
+from itertools import chain
+
 class Value:
     """Wraps a scalar and remembers how it was computed, so gradients can flow backward through it."""
 
@@ -39,6 +44,33 @@ class Value:
         out._backward = lambda: propagate_grad(self, otherValue, out)
         return out
 
+    def __pow__(self, n):
+
+        def propagate_grad(a_node, n, out):
+            a_node.grad += out.grad * n * a_node.data ** (n-1)
+
+        out = Value(self.data ** n, (self,), "**")
+        out._backward = lambda : propagate_grad(self, n, out)
+        return out
+
+    def exp(self):
+
+        def propagate_grad(a_node, out):
+            a_node.grad += out.grad * out.data
+        
+        out = Value(math.exp(self.data), (self,), "exp")
+        out._backward = lambda : propagate_grad(self, out)
+        return out
+
+    def tanh(self):
+
+        def propagate_grad(a_node, out):
+            a_node.grad += out.grad * (1 - out.data**2)
+
+        out = Value(math.tanh(self.data), (self,), "tanh")
+        out._backward = lambda : propagate_grad(self, out)
+        return out
+
     def backward(self):
         topo: list[Value] = []
         visited = set()
@@ -53,3 +85,48 @@ class Value:
 
         self.grad = 1.0
         [node._backward() for node in reversed(topo)]
+
+class Neuron:
+
+    def __init__(self, nin: int) -> None:
+        self.w = [ Value(random.uniform(-1, 1)) for _ in range(nin)]
+        self.b = Value(random.uniform(-1, 1))
+
+    def __call__(self, x):
+        result = sum((wi * xi for wi, xi in zip(self.w, x)), start=self.b)
+        return result.tanh()
+
+    def parameters(self):
+        return self.w + [self.b]
+
+
+class Layer:
+
+    def __init__(self, nin: int, nout: int) -> None:
+        self.nout = nout
+        self.neurons = [Neuron(nin) for _ in range(nout)]
+
+    def __call__(self, x):
+        if self.nout == 1:
+            return self.neurons[0](x)
+        return [neuron(x) for neuron in self.neurons]
+
+    def parameters(self):
+        return list(chain.from_iterable(neuron.parameters() for neuron in self.neurons))
+
+
+class MLP:
+
+    def __init__(self, nin: int, nouts: list[int]) -> None:
+        self.layers : list[Layer] = []
+        for nout in nouts:
+            self.layers.append(Layer(nin, nout))
+            nin = nout
+
+    def __call__(self, x) -> Any:
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+    def parameters(self):
+        return list(chain.from_iterable(layer.parameters() for layer in self.layers))
