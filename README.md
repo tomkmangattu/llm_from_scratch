@@ -28,7 +28,9 @@ notes/          # week-by-week write-ups
 
 ## Progress
 
-- [ ] **Week 1** — Environment + micro-autograd. `llm/autograd.py`'s `Value` class
+- [x] **Week 1** — Environment + micro-autograd. `llm/autograd.py`'s `Value` class
       matches PyTorch's autograd gradients to `1e-6` on a multi-op expression
-      (`tests/test_autograd.py`). `Neuron`/`Layer`/`MLP` built on top of `Value`;
-      training loop on the toy dataset still pending.
+      (`tests/test_autograd.py`). `Neuron`/`Layer`/`MLP` built on top of `Value`
+      and verified against PyTorch the same way. `scripts/train_toy_mlp.py`
+      trains an `MLP(3, [4, 4, 1])` on the toy 4-example dataset with plain
+      gradient descent; loss decreases smoothly toward 0.

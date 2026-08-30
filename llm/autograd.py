@@ -19,6 +19,7 @@ class Value:
     def __add__(self, other):
 
         def propagate_grad(a_node, b_node, out):
+            # += because a node can feed into multiple outputs; gradients from each must accumulate, not overwrite.
             a_node.grad += out.grad
             b_node.grad += out.grad
 
@@ -33,6 +34,7 @@ class Value:
     def __mul__(self, other):
 
         def propagate_grad(a_node, b_node, out):
+            # local derivative of a*b w.r.t. each factor is the *other* factor's data.
             a_node.grad += out.grad * b_node.data
             b_node.grad += out.grad * a_node.data
 
@@ -44,8 +46,16 @@ class Value:
         out._backward = lambda: propagate_grad(self, otherValue, out)
         return out
 
-    def __pow__(self, n):
+    def __sub__(self, other):
+        # expressed via __add__/__mul__ so subtraction gets correct gradient propagation for free.
+        if isinstance(other, Value):
+            b_node = other
+        else:
+            b_node = Value(other)
+        return self + (b_node * -1)
 
+    def __pow__(self, n):
+        # n is a plain number (int/float), not a Value, so only self needs a gradient here.
         def propagate_grad(a_node, n, out):
             a_node.grad += out.grad * n * a_node.data ** (n-1)
 
@@ -56,6 +66,7 @@ class Value:
     def exp(self):
 
         def propagate_grad(a_node, out):
+            # d(e^x)/dx = e^x = out.data, so the derivative is expressed via the output, not the input.
             a_node.grad += out.grad * out.data
         
         out = Value(math.exp(self.data), (self,), "exp")
@@ -65,6 +76,7 @@ class Value:
     def tanh(self):
 
         def propagate_grad(a_node, out):
+            # d(tanh x)/dx = 1 - tanh(x)^2 = 1 - out.data**2, again defined in terms of the output.
             a_node.grad += out.grad * (1 - out.data**2)
 
         out = Value(math.tanh(self.data), (self,), "tanh")
@@ -76,6 +88,7 @@ class Value:
         visited = set()
 
         def build_topo(v: Value):
+            # post-order DFS: a node is appended only after all its children, so topo is a valid topological order.
             if v not in visited:
                 visited.add(v)
                 [build_topo(node) for node in v._prev]
@@ -83,7 +96,8 @@ class Value:
 
         build_topo(self)
 
-        self.grad = 1.0
+        self.grad = 1.0  # seed: d(self)/d(self) = 1
+        # reversed(topo): propagate from outputs back to inputs, so every node's grad is fully accumulated before it fires.
         [node._backward() for node in reversed(topo)]
 
 class Neuron:
@@ -93,6 +107,8 @@ class Neuron:
         self.b = Value(random.uniform(-1, 1))
 
     def __call__(self, x):
+        # start=self.b folds the bias into the sum and avoids sum()'s default int(0) start,
+        # which would crash since Value has no __radd__.
         result = sum((wi * xi for wi, xi in zip(self.w, x)), start=self.b)
         return result.tanh()
 
@@ -107,11 +123,14 @@ class Layer:
         self.neurons = [Neuron(nin) for _ in range(nout)]
 
     def __call__(self, x):
+        # a single-neuron layer returns a bare Value instead of a length-1 list,
+        # so a final output layer chains cleanly into loss math like `ypred - ygt`.
         if self.nout == 1:
             return self.neurons[0](x)
         return [neuron(x) for neuron in self.neurons]
 
     def parameters(self):
+        # flattens each neuron's own [w..., b] list into one single flat list of Values.
         return list(chain.from_iterable(neuron.parameters() for neuron in self.neurons))
 
 
@@ -121,12 +140,14 @@ class MLP:
         self.layers : list[Layer] = []
         for nout in nouts:
             self.layers.append(Layer(nin, nout))
-            nin = nout
+            nin = nout  # next layer's input size is this layer's output size
 
     def __call__(self, x) -> Any:
+        # feed forward: each layer's output becomes the next layer's input.
         for layer in self.layers:
             x = layer(x)
         return x
 
     def parameters(self):
+        # flattens every layer's params into one flat list, for zero-grad / optimizer update loops.
         return list(chain.from_iterable(layer.parameters() for layer in self.layers))
