@@ -1,11 +1,11 @@
 from llm.tokenizer import (
-    adjacent_token_counter,
+    count_adjacent_pairs,
     decode,
-    decode_most_freq,
+    expand_merges,
     encode,
     encode_with_bpe,
     merge,
-    most_freq_finder,
+    find_most_frequent_pair,
 )
 
 
@@ -20,14 +20,14 @@ def test_encode_decode_round_trip_emoji():
     assert isinstance(encode(text), list)
 
 
-def test_adjacent_token_counter_counts_overlapping_pairs():
+def test_count_adjacent_pairs_counts_overlapping_pairs():
     # "aaaa" -> 3 overlapping (97, 97) pairs, not 2 (non-overlapping)
-    assert adjacent_token_counter([97, 97, 97, 97]) == {(97, 97): 3}
+    assert count_adjacent_pairs([97, 97, 97, 97]) == {(97, 97): 3}
 
 
-def test_adjacent_token_counter_empty_and_single_token():
-    assert adjacent_token_counter([]) == {}
-    assert adjacent_token_counter([97]) == {}
+def test_count_adjacent_pairs_empty_and_single_token():
+    assert count_adjacent_pairs([]) == {}
+    assert count_adjacent_pairs([97]) == {}
 
 
 def test_merge_replaces_all_non_overlapping_occurrences():
@@ -42,27 +42,27 @@ def test_merge_ignores_absent_pair():
     assert tokens == [1, 2, 3]
 
 
-def test_most_freq_finder_picks_highest_count():
+def test_find_most_frequent_pair_picks_highest_count():
     counts = {(1, 2): 1, (3, 4): 5, (5, 6): 2}
-    assert most_freq_finder(counts) == (3, 4)
+    assert find_most_frequent_pair(counts) == (3, 4)
 
 
-def test_most_freq_finder_returns_none_below_threshold():
+def test_find_most_frequent_pair_returns_none_below_threshold():
     # a pair that only occurs once anywhere is not worth merging
-    assert most_freq_finder({(1, 2): 1}) is None
-    assert most_freq_finder({}) is None
+    assert find_most_frequent_pair({(1, 2): 1}) is None
+    assert find_most_frequent_pair({}) is None
 
 
-def test_decode_most_freq_reverses_single_level_merge():
+def test_expand_merges_reverses_single_level_merge():
     tokens = [256, 256]
-    decode_most_freq(tokens, {(97, 97): 256})
+    expand_merges(tokens, {(97, 97): 256})
     assert tokens == [97, 97, 97, 97]
 
 
-def test_decode_most_freq_reverses_nested_merge():
+def test_expand_merges_reverses_nested_merge():
     # 257 = (256, 97), and 256 itself = (97, 97) -> must fully expand both levels
     tokens = [257]
-    decode_most_freq(tokens, {(97, 97): 256, (256, 97): 257})
+    expand_merges(tokens, {(97, 97): 256, (256, 97): 257})
     assert tokens == [97, 97, 97]
 
 
@@ -84,5 +84,5 @@ def test_bpe_encode_decode_round_trip():
     merged_pair = {(97, 109): 256, (111, 109): 257, (32, 73): 258}
     text = "Hi am a software developer from india"
     tokens = encode_with_bpe(text, merged_pair)
-    decode_most_freq(tokens, merged_pair)
+    expand_merges(tokens, merged_pair)
     assert decode(tokens) == text

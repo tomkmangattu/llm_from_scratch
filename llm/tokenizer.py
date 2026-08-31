@@ -1,12 +1,15 @@
 
 # byte level pretokenizer start
 def encode(text: str) -> list[int]:
+    # base vocab is the 256 byte values, so any UTF-8 string decomposes with no OOV
     return list(text.encode("utf-8"))
 
 def decode(byte_values: list[int]) -> str:
+    # only valid once every merged id has been expanded back to raw bytes via expand_merges
     return bytes(byte_values).decode("utf-8")
 
-def adjacent_token_counter(token_list: list[int]) -> dict[tuple[int, int], int]:
+def count_adjacent_pairs(token_list: list[int]) -> dict[tuple[int, int], int]:
+    # idx += 1 (not += 2) so overlapping runs like "aaaa" count all 3 adjacent pairs, not just 2
     adjacent_pair_count: dict[tuple[int, int], int] = {}
     idx = 0
     while idx < len(token_list) - 1:
@@ -19,6 +22,7 @@ def adjacent_token_counter(token_list: list[int]) -> dict[tuple[int, int], int]:
     return adjacent_pair_count
 
 def merge(token_list : list[int], pair: tuple[int, int], new_id : int) -> None:
+    # pop() already shifts everything left by one, so idx += 1 (not += 2) reaches the next unconsumed position
     idx = 0
     while idx < len(token_list) - 1:
         if token_list[idx] == pair[0] and token_list[idx + 1] == pair[1]:
@@ -26,7 +30,7 @@ def merge(token_list : list[int], pair: tuple[int, int], new_id : int) -> None:
             token_list.pop(idx + 1)
         idx += 1
 
-def most_freq_finder(adjacent_token_count : dict[tuple[int, int], int]) -> tuple[int, int] | None:
+def find_most_frequent_pair(adjacent_token_count : dict[tuple[int, int], int]) -> tuple[int, int] | None:
     freq_pair : tuple[int, int] | None = None
     freq = 0
     for key, value in adjacent_token_count.items():
@@ -34,15 +38,17 @@ def most_freq_finder(adjacent_token_count : dict[tuple[int, int], int]) -> tuple
             freq_pair = key; freq = value
         elif value > freq:
             freq_pair = key; freq = value
+    # freq > 1 stops training once no pair repeats, so we never merge a one-off occurrence
     if freq > 1 and freq_pair:
         return freq_pair
     return None
 
-def decode_most_freq(token_list : list[int], merged_pair : dict[tuple[int, int], int]) -> None:
+def expand_merges(token_list : list[int], merged_pair : dict[tuple[int, int], int]) -> None:
     new_token_merged = {new_token: pair for pair, new_token in merged_pair.items()}
     idx = 0
     while idx < len(token_list):
         if token_list[idx] > 255 :
+            # idx does NOT advance here: actual_pair[0] may itself be a merged id (nested merge), so re-check the same slot
             actual_pair = new_token_merged[token_list[idx]]
             token_list[idx] = actual_pair[0]
             token_list.insert(idx + 1, actual_pair[1])
@@ -52,14 +58,16 @@ def decode_most_freq(token_list : list[int], merged_pair : dict[tuple[int, int],
 def encode_with_bpe(text: str, merged_pair : dict[tuple[int, int], int]) -> list[int]:
     encoded_list = encode(text)
     code_vs_pair = {code: pair for pair, code in merged_pair.items()}
+    # new_id was assigned in increasing order during training, so ascending code order == learned-first order
     sorted_code = sorted(code_vs_pair.keys())
 
-    adjacent_pair_count = adjacent_token_counter(encoded_list)
+    adjacent_pair_count = count_adjacent_pairs(encoded_list)
     for code in sorted_code:
         current_pair = code_vs_pair[code]
         if adjacent_pair_count.get(current_pair):
             merge(encoded_list, current_pair, code)
-            adjacent_pair_count = adjacent_token_counter(encoded_list)
+            # recompute after every merge since pair positions shift once tokens are consumed
+            adjacent_pair_count = count_adjacent_pairs(encoded_list)
 
     return encoded_list
 
@@ -70,21 +78,21 @@ def byte_level_tokenizer():
     next_token = 256
     token_list = encode(text)
     print(f'Embeded text: {token_list}')
-    adjacent_token_count = adjacent_token_counter(token_list)
+    adjacent_token_count = count_adjacent_pairs(token_list)
     print(f'Adjacent pair count : {adjacent_token_count}')
 
-    most_freq_element = most_freq_finder(adjacent_token_count)
+    most_freq_element = find_most_frequent_pair(adjacent_token_count)
     while most_freq_element:
         # print(f'Most freq element {most_freq_element}')
         merge(token_list, most_freq_element, next_token)
         merged_pair[most_freq_element] = next_token
         next_token += 1
-        adjacent_token_count = adjacent_token_counter(token_list)
-        most_freq_element = most_freq_finder(adjacent_token_count)
+        adjacent_token_count = count_adjacent_pairs(token_list)
+        most_freq_element = find_most_frequent_pair(adjacent_token_count)
 
     print(f'Embeded text after freq replace: {token_list}')
     print(f'Merged pairs {merged_pair}')
-    decode_most_freq(token_list, merged_pair)
+    expand_merges(token_list, merged_pair)
     print(f'Reversing merge {token_list}')
     str_decoded = decode(token_list)
     print(f'decoded text: {str_decoded}')
@@ -92,7 +100,7 @@ def byte_level_tokenizer():
     new_text = "Hi am a software developer from india"
     text_emc = encode_with_bpe(new_text, merged_pair)
     print(f'Encoded text {text_emc}')
-    decode_most_freq(text_emc, merged_pair)
+    expand_merges(text_emc, merged_pair)
     text_dec =  decode(text_emc)
     print(f'Decoded text {text_dec}')
 # byte level pretokenizer end
