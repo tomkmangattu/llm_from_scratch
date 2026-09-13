@@ -23,6 +23,7 @@ with open(merge_path) as file:
         gpt2_merges.append((pair[0], pair[1]))
 
 merge_to_actual = { gpt2_vocab[merge[0] + merge[1]] : (gpt2_vocab[merge[0]], gpt2_vocab[merge[1]]) for merge in gpt2_merges}
+gpt2_merge_vs_rank = {merge_pair: idx for idx, merge_pair in enumerate(gpt2_merges)}
 
 # byte level pretokenizer start
 def encode(text: str) -> list[int]:
@@ -171,21 +172,33 @@ def byte_to_unicode() -> dict[int, str]:
 def unicode_to_byte() -> dict[str, int]:
     return {unicode: byte for byte , unicode in byte_to_unicode().items()}
 
-def encode_chunk_with_gpt2_vocab(chunk: str, gpt2_merges, gpt2_vocab, byte_vs_unicode: dict[int, str]) -> list[int]:
+def encode_chunk_with_gpt2_vocab(chunk: str, gpt2_merges : list, gpt2_vocab, byte_vs_unicode: dict[int, str]) -> list[int]:
     byte_list = encode(chunk) # text to byte
     char_list = [byte_vs_unicode[byte] for byte in byte_list]  # byte to unicode
     token_ids = [gpt2_vocab[char] for char in char_list] # unicode to gpt2_token
 
-    # NOTE: runs the full 50,000-rule gpt2_merges scan per chunk (not per text), so per-chunk overhead
-    # is much higher than before pretokenize() was added; fix later if this becomes a bottleneck
+    # each merge step picks, among only the pairs currently present in the chunk, the one with
+    # the lowest gpt2_merge_vs_rank (highest merge priority) — O(pairs present) instead of O(50,000 rules)
     adjacent_pair_count = count_adjacent_pairs(token_ids)
-    for left, right in gpt2_merges:
-        pair_ids = (gpt2_vocab[left], gpt2_vocab[right]) # merge pairs are unicode, converting to tokens
-        if adjacent_pair_count.get(pair_ids):
-            new_id = gpt2_vocab[left + right] # new token of merge pairs
-            merge(token_ids, pair_ids, new_id)
-            # recompute after every merge since pair positions shift once tokens are consumed
-            adjacent_pair_count = count_adjacent_pairs(token_ids)
+
+    while True:
+        rank = None
+        lowest_rank_pair = None
+        for pair in adjacent_pair_count.keys():
+            pair_chars = gpt2_rev_vocab[pair[0]], gpt2_rev_vocab[pair[1]] # token to unicode
+            current_rank = gpt2_merge_vs_rank.get(pair_chars) # merge order
+            if current_rank is None:
+                continue
+            if rank is None or rank > current_rank:
+                rank = current_rank
+                lowest_rank_pair = pair_chars
+        if rank is None or lowest_rank_pair is None: # no pairs to merge
+            break
+        new_id = gpt2_vocab[lowest_rank_pair[0] + lowest_rank_pair[1]]
+        pair_id = gpt2_vocab[lowest_rank_pair[0]], gpt2_vocab[lowest_rank_pair[1]] # unicode to token
+        merge(token_ids, pair_id, new_id)
+        adjacent_pair_count = count_adjacent_pairs(token_ids)
+
     return token_ids
 
 def encode_with_gpt2_vocab(text: str, gpt2_merges = gpt2_merges, gpt2_vocab = gpt2_vocab) -> list[int]:
