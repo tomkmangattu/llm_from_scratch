@@ -1,3 +1,28 @@
+import json
+from pathlib import Path
+import regex
+
+vocab_path = Path(__file__).parent.parent / "data/gpt2_vocab.json"
+merge_path = Path(__file__).parent.parent / "data/gpt2_merges.txt"
+
+gpt2_pattern = regex.compile(
+    r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+)
+
+with open(vocab_path) as file:
+    gpt2_vocab = json.load(file)
+
+gpt2_rev_vocab = {value:key for key, value in gpt2_vocab.items()}
+
+with open(merge_path) as file:
+    gpt2_merges = []
+    for line in file:
+        if line.startswith("#version:"):
+            continue
+        pair = line.strip().split()
+        gpt2_merges.append((pair[0], pair[1]))
+
+merge_to_actual = { gpt2_vocab[merge[0] + merge[1]] : (gpt2_vocab[merge[0]], gpt2_vocab[merge[1]]) for merge in gpt2_merges}
 
 # byte level pretokenizer start
 def encode(text: str) -> list[int]:
@@ -130,6 +155,71 @@ def char_level_example():
 
 # character level tokenizer end
 
+# GPT-2 vocab loading start
+def byte_to_unicode() -> dict[int, str]:
+    byte_vs_unicode : dict[int, str] = {}
+    next_token = 256
+    for idx in range(0, 256):
+        if 33 <= idx <= 126 or 161 <= idx <= 172 or 174 <= idx <= 255 :
+            ch = chr(idx)
+            byte_vs_unicode[idx] = ch
+        else:
+            byte_vs_unicode[idx] = chr(next_token)
+            next_token += 1
+    return byte_vs_unicode
+
+def unicode_to_byte() -> dict[str, int]:
+    return {unicode: byte for byte , unicode in byte_to_unicode().items()}
+
+def encode_chunk_with_gpt2_vocab(chunk: str, gpt2_merges, gpt2_vocab, byte_vs_unicode: dict[int, str]) -> list[int]:
+    byte_list = encode(chunk) # text to byte
+    char_list = [byte_vs_unicode[byte] for byte in byte_list]  # byte to unicode
+    token_ids = [gpt2_vocab[char] for char in char_list] # unicode to gpt2_token
+
+    # NOTE: runs the full 50,000-rule gpt2_merges scan per chunk (not per text), so per-chunk overhead
+    # is much higher than before pretokenize() was added; fix later if this becomes a bottleneck
+    adjacent_pair_count = count_adjacent_pairs(token_ids)
+    for left, right in gpt2_merges:
+        pair_ids = (gpt2_vocab[left], gpt2_vocab[right]) # merge pairs are unicode, converting to tokens
+        if adjacent_pair_count.get(pair_ids):
+            new_id = gpt2_vocab[left + right] # new token of merge pairs
+            merge(token_ids, pair_ids, new_id)
+            # recompute after every merge since pair positions shift once tokens are consumed
+            adjacent_pair_count = count_adjacent_pairs(token_ids)
+    return token_ids
+
+def encode_with_gpt2_vocab(text: str, gpt2_merges = gpt2_merges, gpt2_vocab = gpt2_vocab) -> list[int]:
+    # merges must never cross a pretokenize() chunk boundary, so each chunk is BPE-encoded independently
+    byte_vs_unicode = byte_to_unicode()
+    gpt2_tokens = []
+    for chunk in pretokenize(text):
+        gpt2_tokens.extend(encode_chunk_with_gpt2_vocab(chunk, gpt2_merges, gpt2_vocab, byte_vs_unicode))
+    return gpt2_tokens
+
+def decode_with_gpt2_vocab(token_ids: list[int]) -> str:
+    token_ids = list(token_ids)  # avoid mutating the caller's list
+    idx = 0
+    while idx < len(token_ids):
+        if token_ids[idx] in merge_to_actual:
+            left, right = merge_to_actual[token_ids[idx]]
+            token_ids[idx] = left
+            # idx does NOT advance here: left may itself be a merged id (nested merge), so re-check the same slot
+            token_ids.insert(idx + 1, right)
+        else:
+            idx += 1
+
+    char_list = [gpt2_rev_vocab[token] for token in token_ids] # converting to chars
+    unicode_vs_byte = unicode_to_byte()
+    byte_list = [unicode_vs_byte[char] for char in char_list] # converting to byte array
+    return decode(byte_list)
+
+def pretokenize(text: str) -> list[str]:
+    return gpt2_pattern.findall(text)
+
 if __name__ == "__main__":
     # char_level_example()
-    byte_level_tokenizer()
+    # byte_level_tokenizer()
+    gpt2_tokens = encode_with_gpt2_vocab("Hello World! This is a test sentence for tokenization.")
+    print(f'GPT2 token encoded : {gpt2_tokens}')
+    decoded_line = decode_with_gpt2_vocab(gpt2_tokens)
+    print(f'Decoded Line : {decoded_line}')
