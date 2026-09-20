@@ -90,6 +90,9 @@ if __name__ == "__main__":
     model = BigramLM(VOCAB_SIZE)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2)
 
+    # takenDataset returns one (x, y) window pair of shape [128]
+    # dataloader call __getItem__ 64 times, then stacks into [64, 128]
+    # B = 64, T = 128
     train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=64, shuffle=True)
 

@@ -50,7 +50,7 @@ notes/          # week-by-week write-ups
       UTF-8 (`tests/test_tokenizer.py`). Known follow-up: per-chunk encoding
       re-scans the full 50,000-rule merge table per chunk, ~5x slower than the
       pre-pretokenizer version — noted in `llm/tokenizer.py`, not yet optimized.
-- [ ] **Week 3** — Data pipeline and a bigram baseline. `llm/data.py` caches a
+- [x] **Week 3** — Data pipeline and a bigram baseline. `llm/data.py` caches a
       tokenized corpus to disk as a `uint16` shard, memory-maps it, and serves
       `(input, target)` sliding windows via a shard-aware `TokenDataset` —
       windows never cross a shard boundary (`tests/test_data.py`).
@@ -60,8 +60,13 @@ notes/          # week-by-week write-ups
       real GPT-2's 50257 vocab makes `nn.Embedding(vocab_size, vocab_size)`
       blow past 16GB RAM. Untrained loss matches `ln(2256) ≈ 7.72`; trained
       loss reaches `4.06` (train) / `5.74` (val), confirming real bigram
-      statistics are learned (`tests/test_bigram.py`). Still open: token +
-      learned positional embeddings (`[batch, seq, n_embd]`) called for by
-      this week's plan haven't been built yet — the bigram floor doesn't need
-      them, but week 4's attention will consume them.
+      statistics are learned (`tests/test_bigram.py`). `llm/embeddings.py`'s
+      `TokenAndPositionalEmbedding` adds a learned token table
+      (`vocab_size × n_embd`) to a learned positional table
+      (`context_length × n_embd`), decoupling `n_embd` from `vocab_size` for
+      the first time — verified by output shape `[batch, seq, n_embd]` and by
+      the same token id at different positions producing different combined
+      vectors (`tests/test_embeddings.py`). Not consumed by the bigram floor
+      itself (position is irrelevant when only one prior token matters), but
+      ready for week 4's attention.
 
